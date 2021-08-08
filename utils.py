@@ -21,7 +21,7 @@ def prep_database(con: sqlite3.Connection) -> None:
            row_end_tstp timestamp,
            row_status_code int
         );""")
-        
+
     cur.execute("""DROP TABLE IF EXISTS temp.contact_tracing_staging""")
     # Create staging table
     cur.execute("""
@@ -35,7 +35,7 @@ def prep_database(con: sqlite3.Connection) -> None:
            data_timetext varchar(256),
            data_added  timestamp
         );""")
-    
+
     cur.execute("""DROP TABLE IF EXISTS temp.contact_tracing_inserts""")
     # Create history table if missing
     cur.execute("""
@@ -52,7 +52,7 @@ def prep_database(con: sqlite3.Connection) -> None:
            row_end_tstp timestamp,
            row_status_code int
         );""")
-        
+
     cur.execute("""DROP TABLE IF EXISTS temp.contact_tracing_updates""")
     # Create history table if missing
     cur.execute("""
@@ -69,9 +69,9 @@ def prep_database(con: sqlite3.Connection) -> None:
            row_end_tstp timestamp,
            row_status_code int
         );""")
-    
+
     cur.close()
-    
+
 
 def htmlify(df: pd.DataFrame) -> str:
     """
@@ -115,7 +115,92 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df["data_added"] = pd.to_datetime(df["Last updated date"], format="%A %d %B %Y")
 
     df = df.drop(col_names, axis=1)
-    
-    df = df.groupby(["severity","data_date","data_location","data_address","data_suburb","data_datetext","data_timetext"]).agg({"data_added":max}).reset_index()
+
+    df = df.groupby(["severity",
+                     "data_date",
+                     "data_location",
+                     "data_address",
+                     "data_suburb",
+                     "data_datetext",
+                     "data_timetext"]).agg({"data_added": max}).reset_index()
 
     return df
+
+
+def load_staging_tables(con: sqlite3.Connection) -> None:
+
+    cur = con.cursor()
+
+    # Create updates
+    cur.execute("""
+        INSERT INTO temp.contact_tracing_updates
+        SELECT
+            staging.*,
+            time('now') as row_start_tstp,
+            time('3000-12-31 23:59:59') as row_end_tstp,
+            1 as row_status_code
+        FROM temp.contact_tracing_staging staging
+        INNER JOIN contact_tracing_hist hist ON  staging.severity = hist.severity
+                                            AND staging.data_date = hist.data_date
+                                            AND staging.data_location = hist.data_location
+                                            AND staging.data_address = hist.data_address
+                                            AND staging.data_suburb = hist.data_suburb
+                                            AND staging.data_datetext = hist.data_datetext
+                                            AND staging.data_timetext = hist.data_timetext
+                                            AND hist.row_status_code = 1
+        WHERE
+            COALESCE(hist.data_added,'') <> COALESCE(staging.data_added,'')
+        """)
+
+    # Create inserts
+    cur.execute("""
+        INSERT INTO temp.contact_tracing_inserts
+        SELECT
+            staging.*,
+            time('now') as row_start_tstp,
+            time('3000-12-31 23:59:59') as row_end_tstp,
+            1 as row_status_code
+        FROM temp.contact_tracing_staging staging
+        LEFT JOIN contact_tracing_hist hist ON  staging.severity = hist.severity
+                                            AND staging.data_date = hist.data_date
+                                            AND staging.data_location = hist.data_location
+                                            AND staging.data_address = hist.data_address
+                                            AND staging.data_suburb = hist.data_suburb
+                                            AND staging.data_datetext = hist.data_datetext
+                                            AND staging.data_timetext = hist.data_timetext
+                                            AND hist.row_status_code = 1
+        WHERE
+            hist.data_location IS NULL
+        """)
+
+    cur.close()
+
+
+def update_historical_records(con: sqlite3.Connection) -> None:
+
+    cur = con.cursor()
+
+    # Update historical records
+    cur.execute("""
+    UPDATE contact_tracing_hist
+    SET row_status_code = 0, row_end_tstp = (SELECT row_start_tstp - 1
+                                             FROM temp.contact_tracing_updates
+                                             WHERE  contact_tracing_updates.severity = contact_tracing_hist.severity
+                                                AND contact_tracing_updates.data_date = contact_tracing_hist.data_date
+                                                AND contact_tracing_updates.data_location = contact_tracing_hist.data_location
+                                                AND contact_tracing_updates.data_address = contact_tracing_hist.data_address
+                                                AND contact_tracing_updates.data_suburb = contact_tracing_hist.data_suburb
+                                                AND contact_tracing_updates.data_datetext = contact_tracing_hist.data_datetext
+                                                AND contact_tracing_updates.data_timetext = contact_tracing_hist.data_timetext
+                                                AND contact_tracing_hist.row_status_code = 1)
+    WHERE EXISTS (SELECT data_location, data_address, data_datetext, data_timetext
+                  FROM temp.contact_tracing_updates
+                  WHERE  contact_tracing_updates.severity = contact_tracing_hist.severity
+                    AND contact_tracing_updates.data_date = contact_tracing_hist.data_date
+                    AND contact_tracing_updates.data_location = contact_tracing_hist.data_location
+                    AND contact_tracing_updates.data_address = contact_tracing_hist.data_address
+                    AND contact_tracing_updates.data_suburb = contact_tracing_hist.data_suburb
+                    AND contact_tracing_updates.data_datetext = contact_tracing_hist.data_datetext
+                    AND contact_tracing_updates.data_timetext = contact_tracing_hist.data_timetext
+                    AND contact_tracing_hist.row_status_code = 1)""")
+    cur.close()
