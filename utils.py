@@ -83,11 +83,14 @@ def htmlify(df: pd.DataFrame) -> str:
     Returns:
         output: str - html string
     """
-
-    output = "<ul>"
-    for row in df.to_dict(orient="records"):
-        output += f"<li>({row['severity']}) {row['data_location']}, {row['data_suburb']} on {row['data_datetext']} between {row['data_timetext']}</li>"
-    output += "</ul>"
+    df = df.sort_values(["data_suburb"])
+    output = ""
+    for suburb in list(df["data_suburb"].unique()):
+        output += f"<h2>{suburb}</h2>"
+        output += "<ul>"
+        for row in df[df["data_suburb"] == suburb].to_dict(orient="records"):
+            output += f"<li>({row['severity']}) {row['data_location']}, {row['data_suburb']} on {row['data_datetext']} between {row['data_timetext']}</li>"
+        output += "</ul>"
     return output
 
 
@@ -107,7 +110,7 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     df["severity"] = df["HealthAdviceHTML"].apply(lambda x: "close" if "close" in x else "casual" if "casual" in x else "low")
     df["data_date"] = pd.to_datetime(df["Date"], format="%A %d %B %Y")
-    df["data_location"] = df["Venue"].apply(unquote)
+    df["data_location"] = df["Venue"].apply(lambda x: unquote(x).strip())
     df["data_address"] = df["Address"].apply(unquote)
     df["data_suburb"] = df["Suburb"].apply(unquote)
     df["data_datetext"] = df["Date"]
@@ -115,14 +118,16 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df["data_added"] = pd.to_datetime(df["Last updated date"], format="%A %d %B %Y")
 
     df = df.drop(col_names, axis=1)
+    df = df.sort_values(["data_date","data_location","data_datetext","data_timetext","data_added"])
 
-    df = df.groupby(["severity",
-                     "data_date",
+    df = df.groupby(["data_date",
                      "data_location",
-                     "data_address",
-                     "data_suburb",
                      "data_datetext",
-                     "data_timetext"]).agg({"data_added": max}).reset_index()
+                     "data_timetext"]).agg({"severity": "last",
+                                            "data_address": "last",
+                                            "data_suburb": "last",
+                                            "data_added": "last",
+                                            }).reset_index()
 
     return df
 
@@ -140,16 +145,15 @@ def load_staging_tables(con: sqlite3.Connection) -> None:
             time('3000-12-31 23:59:59') as row_end_tstp,
             1 as row_status_code
         FROM temp.contact_tracing_staging staging
-        INNER JOIN contact_tracing_hist hist ON  staging.severity = hist.severity
-                                            AND staging.data_date = hist.data_date
+        INNER JOIN contact_tracing_hist hist ON  staging.data_date = hist.data_date
                                             AND staging.data_location = hist.data_location
-                                            AND staging.data_address = hist.data_address
-                                            AND staging.data_suburb = hist.data_suburb
                                             AND staging.data_datetext = hist.data_datetext
                                             AND staging.data_timetext = hist.data_timetext
                                             AND hist.row_status_code = 1
         WHERE
-            COALESCE(hist.data_added,'') <> COALESCE(staging.data_added,'')
+                COALESCE(hist.severity,'') <> COALESCE(staging.severity,'')
+            OR  COALESCE(hist.data_address,'') <> COALESCE(staging.data_address,'')
+            OR  COALESCE(hist.data_suburb,'') <> COALESCE(staging.data_suburb,'')
         """)
 
     # Create inserts
@@ -161,11 +165,8 @@ def load_staging_tables(con: sqlite3.Connection) -> None:
             time('3000-12-31 23:59:59') as row_end_tstp,
             1 as row_status_code
         FROM temp.contact_tracing_staging staging
-        LEFT JOIN contact_tracing_hist hist ON  staging.severity = hist.severity
-                                            AND staging.data_date = hist.data_date
+        LEFT JOIN contact_tracing_hist hist ON  staging.data_date = hist.data_date
                                             AND staging.data_location = hist.data_location
-                                            AND staging.data_address = hist.data_address
-                                            AND staging.data_suburb = hist.data_suburb
                                             AND staging.data_datetext = hist.data_datetext
                                             AND staging.data_timetext = hist.data_timetext
                                             AND hist.row_status_code = 1
@@ -185,21 +186,15 @@ def update_historical_records(con: sqlite3.Connection) -> None:
     UPDATE contact_tracing_hist
     SET row_status_code = 0, row_end_tstp = (SELECT row_start_tstp - 1
                                              FROM temp.contact_tracing_updates
-                                             WHERE  contact_tracing_updates.severity = contact_tracing_hist.severity
-                                                AND contact_tracing_updates.data_date = contact_tracing_hist.data_date
+                                             WHERE  contact_tracing_updates.data_date = contact_tracing_hist.data_date
                                                 AND contact_tracing_updates.data_location = contact_tracing_hist.data_location
-                                                AND contact_tracing_updates.data_address = contact_tracing_hist.data_address
-                                                AND contact_tracing_updates.data_suburb = contact_tracing_hist.data_suburb
                                                 AND contact_tracing_updates.data_datetext = contact_tracing_hist.data_datetext
                                                 AND contact_tracing_updates.data_timetext = contact_tracing_hist.data_timetext
                                                 AND contact_tracing_hist.row_status_code = 1)
     WHERE EXISTS (SELECT data_location, data_address, data_datetext, data_timetext
                   FROM temp.contact_tracing_updates
-                  WHERE  contact_tracing_updates.severity = contact_tracing_hist.severity
-                    AND contact_tracing_updates.data_date = contact_tracing_hist.data_date
+                  WHERE  contact_tracing_updates.data_date = contact_tracing_hist.data_date
                     AND contact_tracing_updates.data_location = contact_tracing_hist.data_location
-                    AND contact_tracing_updates.data_address = contact_tracing_hist.data_address
-                    AND contact_tracing_updates.data_suburb = contact_tracing_hist.data_suburb
                     AND contact_tracing_updates.data_datetext = contact_tracing_hist.data_datetext
                     AND contact_tracing_updates.data_timetext = contact_tracing_hist.data_timetext
                     AND contact_tracing_hist.row_status_code = 1)""")
