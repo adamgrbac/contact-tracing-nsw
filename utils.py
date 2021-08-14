@@ -191,7 +191,7 @@ def update_historical_records(con: sqlite3.Connection) -> None:
                                                 AND contact_tracing_updates.data_datetext = contact_tracing_hist.data_datetext
                                                 AND contact_tracing_updates.data_timetext = contact_tracing_hist.data_timetext
                                                 AND contact_tracing_hist.row_status_code = 1)
-    WHERE EXISTS (SELECT data_location, data_address, data_datetext, data_timetext
+    WHERE EXISTS (SELECT data_location, data_datetext, data_timetext
                   FROM temp.contact_tracing_updates
                   WHERE  contact_tracing_updates.data_date = contact_tracing_hist.data_date
                     AND contact_tracing_updates.data_location = contact_tracing_hist.data_location
