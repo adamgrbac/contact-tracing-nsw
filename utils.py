@@ -86,7 +86,7 @@ def htmlify(df: pd.DataFrame) -> str:
     df = df.sort_values(["data_suburb"])
     output = ""
     for suburb in list(df["data_suburb"].unique()):
-        output += f"<h2>{suburb}</h2>"
+        output += f"<h4>{suburb}</h4>"
         output += "<ul>"
         for row in df[df["data_suburb"] == suburb].to_dict(orient="records"):
             output += f"<li>({row['severity']}) {row['data_location']}, {row['data_suburb']} on {row['data_datetext']} between {row['data_timetext']}</li>"
@@ -191,7 +191,7 @@ def update_historical_records(con: sqlite3.Connection) -> None:
                                                 AND contact_tracing_updates.data_datetext = contact_tracing_hist.data_datetext
                                                 AND contact_tracing_updates.data_timetext = contact_tracing_hist.data_timetext
                                                 AND contact_tracing_hist.row_status_code = 1)
-    WHERE EXISTS (SELECT data_location, data_address, data_datetext, data_timetext
+    WHERE EXISTS (SELECT data_location, data_datetext, data_timetext
                   FROM temp.contact_tracing_updates
                   WHERE  contact_tracing_updates.data_date = contact_tracing_hist.data_date
                     AND contact_tracing_updates.data_location = contact_tracing_hist.data_location
