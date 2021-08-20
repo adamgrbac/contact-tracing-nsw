@@ -115,7 +115,7 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df["data_suburb"] = df["Suburb"].apply(unquote)
     df["data_datetext"] = df["Date"]
     df["data_timetext"] = df["Time"]
-    df["data_added"] = pd.to_datetime(df["Last updated date"] if df["Last updated date"] != 'Saturday 00 January 1900' else 'Monday 01 January 1900', format="%A %d %B %Y")
+    df["data_added"] = df["Last updated date"].apply(lambda x: pd.to_datetime(x if x != 'Saturday 00 January 1900' else 'Monday 01 January 1900', format="%A %d %B %Y"))
 
     df = df.drop(col_names, axis=1)
     df = df.sort_values(["data_date","data_location","data_datetext","data_timetext","data_added"])
